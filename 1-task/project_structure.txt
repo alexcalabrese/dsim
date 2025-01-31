@@ -1,0 +1,20 @@
+audio-emotion-detection/
+├── config/
+│   ├── hyperparameters.yaml
+│   └── paths.yaml
+├── data/
+│   ├── dataset.py
+│   └── preprocessing.py
+├── features/
+│   ├── audio_features.py
+│   └── feature_store.py
+├── models/
+│   ├── model.py
+│   ├── train.py
+│   └── inference.py
+├── utils/
+│   ├── visualization.py
+│   └── logger.py
+└── tests/
+    ├── test_data.py
+    └── test_features.py 
