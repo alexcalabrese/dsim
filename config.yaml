@@ -1,0 +1,24 @@
+# Training parameters
+training:
+  dataset_percentage: 0.02  # Percentage of dataset to use (1%)
+  batch_size: 32
+  epochs: 5
+  validation_split: 0.2
+  learning_rate: 0.001
+
+# Model parameters
+model:
+  dropout_rate: 0.3
+  conv_filters: [32, 64, 128]
+  dense_units: [256, 128]
+
+# Feature extraction parameters
+features:
+  fixed_time_steps: 128
+  fixed_freq_bins: 128
+  sample_rate: 16000
+
+# Paths
+paths:
+  evaluation_dir: "./evaluation"
+  models_dir: "./models" 

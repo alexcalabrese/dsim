@@ -1,8 +1,9 @@
 import argparse
 import logging
-from pathlib import Path
 import numpy as np
-from typing import Optional
+from pathlib import Path
+import yaml
+from typing import Optional, Dict
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
@@ -12,13 +13,33 @@ from model import EmotionDetectionModel, prepare_features_for_model
 from utils import load_audio, extract_features, normalize_features
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def train_model(data_dir: str, model_save_path: Optional[str] = None):
+def load_config(config_path: str) -> Dict:
+    """
+    Load configuration from YAML file.
+    
+    Parameters
+    ----------
+    config_path : str
+        Path to the configuration file
+        
+    Returns
+    -------
+    Dict
+        Configuration dictionary
+    """
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        logger.info(f"Successfully loaded configuration from {config_path}")
+        return config
+    except Exception as e:
+        logger.error(f"Error loading configuration: {str(e)}")
+        raise
+
+def train_model(data_dir: str, model_save_path: Optional[str] = None, config_path: str = "config.yaml"):
     """
     Train the emotion detection model on the CREMA-D dataset.
     
@@ -26,22 +47,32 @@ def train_model(data_dir: str, model_save_path: Optional[str] = None):
     ----------
     data_dir : str
         Path to the data directory
-    model_save_path : Optional[str], optional
-        Path to save the trained model, by default None
+    model_save_path : Optional[str]
+        Path to save the trained model
+    config_path : str
+        Path to the configuration file
     """
     try:
+        # Load configuration
+        config = load_config(config_path)
+        
         logger.info("Initializing data processor...")
         processor = DataProcessor(data_dir)
         
         logger.info("Preparing dataset...")
-        dataset = processor.prepare_dataset()
+        dataset = processor.prepare_dataset(
+            sample_size=config['training']['dataset_percentage']
+        )
         
         # Get input shape from first training example
         sample_features = prepare_features_for_model(dataset['train_features'][0])
         input_shape = sample_features.shape[1:]
         
         logger.info("Initializing model...")
-        model = EmotionDetectionModel(input_shape=input_shape)
+        model = EmotionDetectionModel(
+            input_shape=input_shape,
+            num_classes=6  # Number of emotions
+        )
         
         logger.info("Preparing training data...")
         X_train = np.vstack([prepare_features_for_model(f) for f in dataset['train_features']])
@@ -53,7 +84,8 @@ def train_model(data_dir: str, model_save_path: Optional[str] = None):
             y_train=dataset['train_labels'],
             X_val=X_val,
             y_val=dataset['val_labels'],
-            epochs=5
+            epochs=config['training']['epochs'],
+            batch_size=config['training']['batch_size']
         )
         
         # Plot training history
@@ -146,7 +178,7 @@ def evaluate_model(model: EmotionDetectionModel,
     # plt.savefig('confusion_matrix.png')
     plt.close()
 
-def predict_emotion(model_path: str, audio_file: str):
+def predict_emotion(model_path: str, audio_file: str, config_path: str = "config.yaml"):
     """
     Predict emotion for a single audio file.
     
@@ -156,8 +188,13 @@ def predict_emotion(model_path: str, audio_file: str):
         Path to the saved model
     audio_file : str
         Path to the audio file
+    config_path : str
+        Path to the configuration file
     """
     try:
+        # Load configuration
+        config = load_config(config_path)
+        
         # Load model
         model = EmotionDetectionModel.load_model(model_path)
         
@@ -190,6 +227,8 @@ def main():
                              help='Path to the data directory')
     train_parser.add_argument('--model_save_path', type=str,
                              help='Path to save the trained model')
+    train_parser.add_argument('--config', type=str, default='config.yaml',
+                             help='Path to the configuration file')
     
     # Predict command
     predict_parser = subparsers.add_parser('predict', help='Predict emotion from audio')
@@ -197,13 +236,15 @@ def main():
                               help='Path to the saved model')
     predict_parser.add_argument('--audio_file', type=str, required=True,
                               help='Path to the audio file')
+    predict_parser.add_argument('--config', type=str, default='config.yaml',
+                              help='Path to the configuration file')
     
     args = parser.parse_args()
     
     if args.command == 'train':
-        train_model(args.data_dir, args.model_save_path)
+        train_model(args.data_dir, args.model_save_path, args.config)
     elif args.command == 'predict':
-        predict_emotion(args.model_path, args.audio_file)
+        predict_emotion(args.model_path, args.audio_file, args.config)
     else:
         parser.print_help()
 

@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
 from sklearn.metrics import confusion_matrix, classification_report
+import yaml
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +20,7 @@ class EmotionDetectionModel:
     A class for emotion detection from audio features using a CNN architecture.
     """
     
-    def __init__(self, input_shape: Tuple[int, ...], num_classes: int = 6):
+    def __init__(self, input_shape: Tuple[int, ...], num_classes: int = 6, config_path: str = "config.yaml"):
         """
         Initialize the emotion detection model.
         
@@ -29,11 +30,17 @@ class EmotionDetectionModel:
             Shape of input features
         num_classes : int, optional
             Number of emotion classes, by default 6
+        config_path : str, optional
+            Path to the configuration file, by default "config.yaml"
         """
         self.input_shape = input_shape
         self.num_classes = num_classes
-        self.model = self._build_model()
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Load configuration
+        with open(config_path, 'r') as f:
+            self.config = yaml.safe_load(f)
+        
         self.emotion_mapping = {
             'ANG': 'anger',
             'DIS': 'disgust',
@@ -42,6 +49,8 @@ class EmotionDetectionModel:
             'NEU': 'neutral',
             'SAD': 'sad'
         }
+        
+        self.model = self._build_model()
         
     def _build_model(self) -> models.Model:
         """
@@ -57,34 +66,35 @@ class EmotionDetectionModel:
             layers.Input(shape=self.input_shape),
             
             # First Convolutional Block
-            layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+            layers.Conv2D(self.config['model']['conv_filters'][0], (3, 3), activation='relu', padding='same'),
             layers.BatchNormalization(),
             layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.25),
+            layers.Dropout(self.config['model']['dropout_rate']),
             
             # Second Convolutional Block
-            layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+            layers.Conv2D(self.config['model']['conv_filters'][1], (3, 3), activation='relu', padding='same'),
             layers.BatchNormalization(),
             layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.25),
+            layers.Dropout(self.config['model']['dropout_rate']),
             
             # Third Convolutional Block
-            layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+            layers.Conv2D(self.config['model']['conv_filters'][2], (3, 3), activation='relu', padding='same'),
             layers.BatchNormalization(),
             layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.25),
+            layers.Dropout(self.config['model']['dropout_rate']),
             
             # Dense Layers
             layers.Flatten(),
-            layers.Dense(256, activation='relu'),
+            layers.Dense(self.config['model']['dense_units'][0], activation='relu'),
             layers.BatchNormalization(),
-            layers.Dropout(0.5),
+            layers.Dropout(self.config['model']['dropout_rate']),
             layers.Dense(self.num_classes, activation='softmax')
         ])
         
-        # Compile model
+        # Compile model with learning rate from config
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.config['training']['learning_rate'])
         model.compile(
-            optimizer='adam',
+            optimizer=optimizer,
             loss='categorical_crossentropy',
             metrics=['accuracy']
         )
@@ -95,7 +105,7 @@ class EmotionDetectionModel:
                             history: Dict,
                             y_true: Optional[np.ndarray] = None,
                             y_pred: Optional[np.ndarray] = None,
-                            base_dir: str = "./evaluation") -> None:
+                            base_dir: Optional[str] = None) -> None:
         """
         Save evaluation plots including training history and confusion matrix.
         
@@ -107,10 +117,14 @@ class EmotionDetectionModel:
             True labels for confusion matrix
         y_pred : Optional[np.ndarray]
             Predicted labels for confusion matrix
-        base_dir : str
+        base_dir : Optional[str]
             Base directory to save evaluation plots
         """
         try:
+            # Use config path if base_dir not provided
+            if base_dir is None:
+                base_dir = self.config['paths']['evaluation_dir']
+            
             # Create evaluation directory with timestamp
             eval_dir = Path(base_dir) / f"evaluation_{self.timestamp}"
             eval_dir.mkdir(parents=True, exist_ok=True)
