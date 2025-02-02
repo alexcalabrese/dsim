@@ -1,14 +1,14 @@
 # Training parameters
 training:
-  dataset_percentage: 0.02  # Percentage of dataset to use (2%)
+  dataset_percentage: 0.5  # Percentage of dataset to use (10%)
   batch_size: 32
-  epochs: 5
+  epochs: 3
   validation_split: 0.2
-  learning_rate: 0.001
+  learning_rate: 0.01
 
 # Model parameters
 model:
-  dropout_rate: 0.3
+  dropout_rate: 0.45
   conv_filters: [32, 64, 128]
   dense_units: [256, 128]
 

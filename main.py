@@ -3,14 +3,18 @@ import logging
 import numpy as np
 from pathlib import Path
 import yaml
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, Union
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
+from numpy.typing import NDArray
+import json
+from datetime import datetime
 
 from data_processor import DataProcessor
 from model import EmotionDetectionModel, prepare_features_for_model
 from utils import load_audio, extract_features, normalize_features
+from model_comparison import BaselineModel, compare_models
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +45,7 @@ def load_config(config_path: str) -> Dict:
 
 def train_model(data_dir: str, model_save_path: Optional[str] = None, config_path: str = "config.yaml"):
     """
-    Train the emotion detection model on the CREMA-D dataset.
+    Train both CNN and baseline models on the CREMA-D dataset.
     
     Parameters
     ----------
@@ -56,6 +60,17 @@ def train_model(data_dir: str, model_save_path: Optional[str] = None, config_pat
         # Load configuration
         config = load_config(config_path)
         
+        # Print training configuration fields
+        logger.info("Training configuration:")
+        for key, value in config['training'].items():
+            print(f"{key}: {value}")
+        
+        # Create evaluation directory with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        eval_dir = Path(config['paths']['evaluation_dir']) / f"evaluation_{timestamp}"
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created evaluation directory: {eval_dir}")
+        
         logger.info("Initializing data processor...")
         processor = DataProcessor(data_dir)
         
@@ -64,45 +79,151 @@ def train_model(data_dir: str, model_save_path: Optional[str] = None, config_pat
             sample_size=config['training']['dataset_percentage']
         )
         
-        # Get input shape from first training example
-        sample_features = prepare_features_for_model(dataset['train_features'][0])
-        input_shape = sample_features.shape[1:]
+        # Get emotion mapping
+        emotion_mapping = processor.emotion_mapping
         
-        logger.info("Initializing model...")
-        model = EmotionDetectionModel(
-            input_shape=input_shape,
-            num_classes=6  # Number of emotions
+        # Train CNN model
+        logger.info("Training CNN model...")
+        cnn_metrics = train_cnn_model(
+            dataset=dataset,
+            model_save_path=model_save_path,
+            config=config,
+            config_path=config_path,
+            eval_dir=eval_dir,
+            timestamp=timestamp
         )
         
-        logger.info("Preparing training data...")
-        X_train = np.vstack([prepare_features_for_model(f) for f in dataset['train_features']])
-        X_val = np.vstack([prepare_features_for_model(f) for f in dataset['val_features']])
-        
-        logger.info("Starting model training...")
-        history = model.train(
-            X_train=X_train,
-            y_train=dataset['train_labels'],
-            X_val=X_val,
-            y_val=dataset['val_labels'],
-            epochs=config['training']['epochs'],
-            batch_size=config['training']['batch_size']
+        # Train baseline model
+        logger.info("Training baseline model...")
+        baseline_metrics = train_baseline_model(
+            dataset=dataset,
+            config=config,
+            emotion_mapping=emotion_mapping,
+            eval_dir=eval_dir
         )
         
-        # Plot training history
-        plot_training_history(history)
+        # Compare models
+        logger.info("Comparing models...")
+        compare_models(
+            cnn_metrics,
+            baseline_metrics,
+            save_dir=eval_dir
+        )
         
-        if model_save_path:
-            logger.info(f"Saving model to {model_save_path}")
-            model.save_model(model_save_path)
-        
-        # Evaluate model
-        logger.info("Evaluating model on test set...")
-        X_test = np.vstack([prepare_features_for_model(f) for f in dataset['test_features']])
-        evaluate_model(model, X_test, dataset['test_labels'], processor.get_label_mapping())
+        # Save final metrics
+        metrics = {
+            'timestamp': timestamp,
+            'cnn': cnn_metrics,
+            'baseline': baseline_metrics,
+            'config': config
+        }
+        metrics_file = eval_dir / 'metrics.json'
+        with open(metrics_file, 'w') as f:
+            json.dump(metrics, f, indent=4)
+        logger.info(f"Saved metrics to {metrics_file}")
         
     except Exception as e:
         logger.error(f"Error in training pipeline: {str(e)}")
         raise
+
+def train_cnn_model(dataset: Dict[str, Union[NDArray, Any]], 
+                   model_save_path: Optional[str], 
+                   config: Dict[str, Any],
+                   config_path: str,
+                   eval_dir: Path,
+                   timestamp: str) -> Dict[str, float]:
+    """
+    Train the CNN model.
+    
+    Parameters
+    ----------
+    dataset : Dict[str, Union[NDArray, Any]]
+        Dataset dictionary containing features and labels
+    model_save_path : Optional[str]
+        Path to save the trained model
+    config : Dict[str, Any]
+        Configuration dictionary
+    config_path : str
+        Path to the configuration file
+    eval_dir : Path
+        Evaluation directory
+    timestamp : str
+        Timestamp for the evaluation directory
+        
+    Returns
+    -------
+    Dict[str, float]
+        Training metrics
+    """
+    # Get input shape from first training example
+    sample_features = prepare_features_for_model(dataset['train_features'][0])
+    input_shape = sample_features.shape[1:]
+    
+    logger.info("Initializing CNN model...")
+    model = EmotionDetectionModel(
+        input_shape=input_shape,
+        num_classes=6,  # Number of emotions
+        config_path=config_path
+    )
+    
+    logger.info("Preparing training data...")
+    X_train = np.vstack([prepare_features_for_model(f) for f in dataset['train_features']])
+    X_val = np.vstack([prepare_features_for_model(f) for f in dataset['val_features']])
+    
+    logger.info("Starting CNN model training...")
+    metrics = model.train(
+        X_train=X_train,
+        y_train=dataset['train_labels'],
+        X_val=X_val,
+        y_val=dataset['val_labels'],
+        epochs=config['training']['epochs'],
+        batch_size=config['training']['batch_size'],
+        eval_dir=eval_dir
+    )
+    
+    if model_save_path:
+        logger.info(f"Saving CNN model to {model_save_path}")
+        model.save_model(model_save_path)
+    
+    return metrics
+
+def train_baseline_model(dataset: Dict[str, Union[NDArray, Any]], 
+                        config: Dict[str, Any],
+                        emotion_mapping: Dict[str, str],
+                        eval_dir: Path) -> Dict[str, float]:
+    """
+    Train the baseline logistic regression model.
+    
+    Parameters
+    ----------
+    dataset : Dict[str, Union[NDArray, Any]]
+        Dataset dictionary containing features and labels
+    config : Dict[str, Any]
+        Configuration dictionary
+    emotion_mapping : Dict[str, str]
+        Mapping of emotion codes to emotion names
+    eval_dir : Path
+        Evaluation directory
+        
+    Returns
+    -------
+    Dict[str, float]
+        Training metrics
+    """
+    logger.info("Initializing baseline model...")
+    baseline = BaselineModel()
+    
+    logger.info("Training baseline model...")
+    metrics = baseline.train(
+        X_train=dataset['train_features'],
+        y_train=dataset['train_labels'],
+        X_val=dataset['val_features'],
+        y_val=dataset['val_labels'],
+        emotion_mapping=emotion_mapping,
+        base_dir=eval_dir
+    )
+    
+    return metrics
 
 def plot_training_history(history: dict):
     """
@@ -134,7 +255,7 @@ def plot_training_history(history: dict):
     plt.legend()
     
     plt.tight_layout()
-    # plt.savefig('training_history.png')
+    plt.savefig('training_history.png')
     plt.close()
 
 def evaluate_model(model: EmotionDetectionModel, 
@@ -222,11 +343,11 @@ def main():
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
     
     # Train command
-    train_parser = subparsers.add_parser('train', help='Train the model')
+    train_parser = subparsers.add_parser('train', help='Train the models')
     train_parser.add_argument('--data_dir', type=str, required=True,
                              help='Path to the data directory')
     train_parser.add_argument('--model_save_path', type=str,
-                             help='Path to save the trained model')
+                             help='Path to save the trained CNN model')
     train_parser.add_argument('--config', type=str, default='config.yaml',
                              help='Path to the configuration file')
     

@@ -54,40 +54,49 @@ class EmotionDetectionModel:
         
     def _build_model(self) -> models.Model:
         """
-        Build and compile the CNN model for emotion detection.
+        Build and compile the CNN model for emotion detection, with adjustments to reduce overfitting.
         
         Returns
         -------
         models.Model
             Compiled Keras model
         """
+        l2_reg = tf.keras.regularizers.l2(1e-4)  # L2 regularization factor
+        
         model = models.Sequential([
             # Input layer
             layers.Input(shape=self.input_shape),
             
-            # First Convolutional Block
-            layers.Conv2D(self.config['model']['conv_filters'][0], (3, 3), activation='relu', padding='same'),
+            # First Convolutional Block with L2 regularization and increased dropout
+            layers.Conv2D(self.config['model']['conv_filters'][0], (3, 3), 
+                          activation='relu', padding='same', kernel_regularizer=l2_reg),
             layers.BatchNormalization(),
             layers.MaxPooling2D((2, 2)),
-            layers.Dropout(self.config['model']['dropout_rate']),
+            layers.Dropout(self.config['model'].get('dropout_rate', 0.3)),  # increased dropout
             
-            # Second Convolutional Block
-            layers.Conv2D(self.config['model']['conv_filters'][1], (3, 3), activation='relu', padding='same'),
+            # Second Convolutional Block with L2 regularization and increased dropout
+            layers.Conv2D(self.config['model']['conv_filters'][1], (3, 3), 
+                          activation='relu', padding='same', kernel_regularizer=l2_reg),
             layers.BatchNormalization(),
             layers.MaxPooling2D((2, 2)),
-            layers.Dropout(self.config['model']['dropout_rate']),
+            layers.Dropout(self.config['model'].get('dropout_rate', 0.3)),
             
-            # Third Convolutional Block
-            layers.Conv2D(self.config['model']['conv_filters'][2], (3, 3), activation='relu', padding='same'),
+            # Third Convolutional Block with L2 regularization and increased dropout
+            layers.Conv2D(self.config['model']['conv_filters'][2], (3, 3), 
+                          activation='relu', padding='same', kernel_regularizer=l2_reg),
             layers.BatchNormalization(),
             layers.MaxPooling2D((2, 2)),
-            layers.Dropout(self.config['model']['dropout_rate']),
+            layers.Dropout(self.config['model'].get('dropout_rate', 0.3)),
             
-            # Dense Layers
-            layers.Flatten(),
-            layers.Dense(self.config['model']['dense_units'][0], activation='relu'),
+            # Global Average Pooling to reduce overfitting compared to Flattening
+            layers.GlobalAveragePooling2D(),
+            
+            # Dense Layers with additional regularization
+            layers.Dense(self.config['model']['dense_units'][0], activation='relu', kernel_regularizer=l2_reg),
             layers.BatchNormalization(),
-            layers.Dropout(self.config['model']['dropout_rate']),
+            layers.Dropout(self.config['model'].get('dropout_rate', 0.3) ),
+            
+            # Output layer
             layers.Dense(self.num_classes, activation='softmax')
         ])
         
@@ -105,7 +114,7 @@ class EmotionDetectionModel:
                             history: Dict,
                             y_true: Optional[np.ndarray] = None,
                             y_pred: Optional[np.ndarray] = None,
-                            base_dir: Optional[str] = None) -> None:
+                            eval_dir: Optional[Path] = None) -> None:
         """
         Save evaluation plots including training history and confusion matrix.
         
@@ -117,17 +126,15 @@ class EmotionDetectionModel:
             True labels for confusion matrix
         y_pred : Optional[np.ndarray]
             Predicted labels for confusion matrix
-        base_dir : Optional[str]
-            Base directory to save evaluation plots
+        eval_dir : Optional[Path]
+            Directory to save evaluation plots, if None uses config path
         """
         try:
-            # Use config path if base_dir not provided
-            if base_dir is None:
-                base_dir = self.config['paths']['evaluation_dir']
+            # Use provided eval_dir if available, otherwise fallback to config path
+            if eval_dir is None:
+                eval_dir = Path(self.config['paths']['evaluation_dir']) / f"evaluation_{self.timestamp}"
+                eval_dir.mkdir(parents=True, exist_ok=True)
             
-            # Create evaluation directory with timestamp
-            eval_dir = Path(base_dir) / f"evaluation_{self.timestamp}"
-            eval_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Saving evaluation plots to {eval_dir}")
             
             # Close any existing plots
@@ -202,7 +209,8 @@ class EmotionDetectionModel:
               y_val: Optional[np.ndarray] = None,
               epochs: int = 50,
               batch_size: int = 32,
-              save_plots: bool = True) -> Dict:
+              save_plots: bool = True,
+              eval_dir: Optional[Path] = None) -> Dict:
         """
         Train the emotion detection model.
         
@@ -226,7 +234,7 @@ class EmotionDetectionModel:
         Returns
         -------
         Dict
-            Training history
+            Training metrics and history
         """
         validation_data = (X_val, y_val) if X_val is not None and y_val is not None else None
         
@@ -238,16 +246,65 @@ class EmotionDetectionModel:
             verbose=1
         )
         
-        if save_plots:
-            # Get predictions for confusion matrix if validation data exists
-            y_pred = self.predict(X_val) if X_val is not None else None
+        # Ensure that the history is correctly captured
+        metrics = {
+            'train_accuracy': float(history.history['accuracy'][-1]),
+            'accuracy_history': history.history['accuracy'],
+            'loss_history': history.history['loss']
+        }
+        
+        if validation_data:
+            val_pred = self.model.predict(X_val)
+            metrics.update({
+                'val_accuracy': float(history.history['val_accuracy'][-1]),
+                'val_accuracy_history': history.history['val_accuracy'],
+                'val_loss_history': history.history['val_loss']
+            })
+            
+            # Calculate per-class metrics
+            if y_val is not None:  # Type guard for mypy
+                y_val_true = np.argmax(y_val, axis=1)
+                y_val_pred = np.argmax(val_pred, axis=1)
+                
+                # Get confusion matrix
+                cm = confusion_matrix(y_val_true, y_val_pred)
+                # Store confusion matrix values
+                for i in range(len(self.emotion_mapping)):
+                    for j in range(len(self.emotion_mapping)):
+                        metrics[f'confusion_matrix_{i}_{j}'] = int(cm[i, j])
+                
+                # Get classification report for detailed metrics
+                report = classification_report(
+                    y_val_true,
+                    y_val_pred,
+                    target_names=list(self.emotion_mapping.values()),
+                    output_dict=True,
+                    zero_division=0
+                )
+                
+                # Add overall metrics
+                metrics.update({
+                    'precision': report['weighted avg']['precision'],
+                    'recall': report['weighted avg']['recall'],
+                    'f1': report['weighted avg']['f1-score']
+                })
+                
+                # Add per-class metrics
+                for emotion in self.emotion_mapping.values():
+                    metrics[f'{emotion}_precision'] = report[emotion]['precision']
+                    metrics[f'{emotion}_recall'] = report[emotion]['recall']
+                    metrics[f'{emotion}_f1'] = report[emotion]['f1-score']
+        
+        # Save evaluation plots if required
+        if save_plots and eval_dir:
             self.save_evaluation_plots(
                 history.history,
                 y_true=y_val,
-                y_pred=y_pred
+                y_pred=val_pred if validation_data else None,
+                eval_dir=eval_dir
             )
         
-        return history.history
+        return metrics
     
     def predict(self, X: np.ndarray) -> np.ndarray:
         """

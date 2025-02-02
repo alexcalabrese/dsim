@@ -5,6 +5,7 @@ from typing import Tuple, List, Dict, Optional
 import logging
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from sklearn.utils import shuffle
 import tensorflow as tf
 from utils import load_audio, extract_features, normalize_features
 
@@ -93,6 +94,9 @@ class DataProcessor:
             
             features = extract_features(signal, sr)
             normalized_features = normalize_features(features)
+            # Print the first few characters of the features and the shape of each column
+            # features_shape = {key: value.shape for key, value in normalized_features.items()}
+            # logger.info(f"Features: {normalized_features}, Shape: {features_shape}")
             
             return normalized_features
         except Exception as e:
@@ -125,7 +129,13 @@ class DataProcessor:
         """
         try:
             # Load metadata
+            logger.info("Loading metadata from the dataset.")
             metadata_df = self.load_metadata()
+            logger.info(f"Metadata loaded successfully with {len(metadata_df)} entries.")
+            
+            # Shuffle the metadata DataFrame to ensure randomness in the dataset
+            metadata_df = shuffle(metadata_df, random_state=random_state)
+            logger.info("Shuffled the dataset for randomness.")
             
             # Sample only a portion of the data
             if sample_size < 1.0:
@@ -133,26 +143,32 @@ class DataProcessor:
                     frac=sample_size, 
                     random_state=random_state
                 ).reset_index(drop=True)
-                logger.info(f"Using {len(metadata_df)} samples ({sample_size*100:.1f}% of the dataset)")
+                logger.info(f"Using {len(metadata_df)} samples ({sample_size*100:.1f}% of the dataset) for training.")
             
             # Encode labels
+            logger.info("Encoding labels for the emotions.")
             labels = self.label_encoder.fit_transform(metadata_df['emotion'])
             labels_onehot = tf.keras.utils.to_categorical(labels)
+            logger.info("Labels encoded successfully.")
             
             # Process audio files and extract features
             features_list = []
+            logger.info("Processing audio files to extract features.")
             for file_name in metadata_df['fileName']:
                 file_path = str(self.data_dir / 'AudioWAV' / f"{file_name}.wav")
                 features = self.process_audio_file(file_path)
                 features_list.append(features)
+                logger.debug(f"Processed features for file: {file_name}.")
             
             # Split dataset
+            logger.info("Splitting the dataset into training, validation, and test sets.")
             train_idx, test_idx = train_test_split(
                 np.arange(len(features_list)),
                 test_size=test_size,
                 random_state=random_state,
                 stratify=labels
             )
+            logger.info(f"Train-test split completed. Train size: {len(train_idx)}, Test size: {len(test_idx)}.")
             
             train_idx, val_idx = train_test_split(
                 train_idx,
@@ -160,6 +176,7 @@ class DataProcessor:
                 random_state=random_state,
                 stratify=labels[train_idx]
             )
+            logger.info(f"Train-validation split completed. Validation size: {len(val_idx)}.")
             
             # Prepare data splits
             splits = {
@@ -175,7 +192,9 @@ class DataProcessor:
                 
                 dataset[f'{split_name}_features'] = split_features
                 dataset[f'{split_name}_labels'] = split_labels
+                logger.info(f"Prepared {split_name} dataset with {len(split_features)} features and {len(split_labels)} labels.")
             
+            logger.info("Dataset preparation completed successfully.")
             return dataset
         
         except Exception as e:
