@@ -1,0 +1,47 @@
+# Dataset parameters
+dataset:
+  root_dir: "Data/3_WebUI_7k/rcnn_dataset"
+  min_box_size: 10
+  min_visibility: 0.3
+
+# Model parameters
+model:
+  backbone: "fasterrcnn_resnet50_fpn_v2"
+  pretrained: true
+
+# Training parameters
+training:
+  num_epochs: 2
+  batch_size: 2
+  num_workers: 0  # Set to higher number if more CPU cores available
+  learning_rate: 0.005
+  momentum: 0.9
+  weight_decay: 0.0005
+  lr_scheduler:
+    step_size: 3
+    gamma: 0.1
+
+# Data augmentation
+augmentation:
+  horizontal_flip_prob: 0.5
+  # Add more augmentations here as needed
+
+# Visualization
+visualization:
+  num_examples: 5  # Number of example predictions to save
+  confidence_threshold: 0.5  # Minimum confidence score for predictions
+  colors:  # Colors for different UI elements (RGB format)
+    default: [255, 0, 0]  # Red for unknown classes
+  box_thickness: 2
+  font_scale: 0.5
+  font_thickness: 1
+
+# Paths and logging
+paths:
+  output_root: "Data/3_WebUI_7k/experiments"
+  model_name: "faster_rcnn"  # Used in output directory naming
+
+# Hardware
+hardware:
+  use_cuda: true
+  cuda_device: 0 
