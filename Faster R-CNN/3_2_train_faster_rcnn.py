@@ -194,6 +194,62 @@ class WebUIDataset(torch.utils.data.Dataset):
         """
         return len(self.images)
 
+def is_colab() -> bool:
+    """Check if the code is running in Google Colab.
+    
+    Returns
+    -------
+    bool
+        True if running in Colab, False otherwise
+    """
+    try:
+        import google.colab
+        return True
+    except ImportError:
+        return False
+
+def setup_output_dir(config: Dict) -> Tuple[Path, bool]:
+    """Setup output directory, handling both local and Colab environments.
+    
+    Parameters
+    ----------
+    config : Dict
+        Configuration dictionary
+        
+    Returns
+    -------
+    Tuple[Path, bool]
+        Output root directory path and whether using Google Drive
+    """
+    using_drive = False
+    
+    if is_colab():
+        try:
+            from google.colab import drive
+            # Mount Google Drive
+            drive.mount('/content/drive')
+            logger.info("Google Drive mounted successfully")
+            
+            # Create output directory in Drive
+            drive_output = Path('/content/drive/MyDrive/faster_rcnn_experiments')
+            drive_output.mkdir(parents=True, exist_ok=True)
+            
+            # Update config to use Drive path
+            config['paths']['output_root'] = str(drive_output)
+            using_drive = True
+            
+            logger.info(f"Output will be saved to Google Drive: {drive_output}")
+            return drive_output, using_drive
+            
+        except Exception as e:
+            logger.warning(f"Failed to mount Google Drive: {str(e)}")
+            logger.warning("Falling back to local storage")
+    
+    # Use local storage
+    output_dir = Path(config['paths']['output_root'])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir, using_drive
+
 def create_experiment_folder(config: Dict) -> Path:
     """Create a timestamped experiment folder.
     
@@ -207,6 +263,9 @@ def create_experiment_folder(config: Dict) -> Path:
     Path
         Path to the experiment folder
     """
+    # Setup output directory
+    output_root, using_drive = setup_output_dir(config)
+    
     # Create timestamp
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -214,18 +273,25 @@ def create_experiment_folder(config: Dict) -> Path:
     exp_name = f"{config['paths']['model_name']}_{timestamp}"
     
     # Create experiment folder
-    exp_dir = Path(config['paths']['output_root']) / exp_name
+    exp_dir = output_root / exp_name
     exp_dir.mkdir(parents=True, exist_ok=True)
     
     # Create subdirectories
     (exp_dir / 'checkpoints').mkdir(exist_ok=True)
     (exp_dir / 'logs').mkdir(exist_ok=True)
     (exp_dir / 'metrics').mkdir(exist_ok=True)
-    (exp_dir / 'predictions').mkdir(exist_ok=True)  # Add predictions directory
+    (exp_dir / 'predictions').mkdir(exist_ok=True)
+    (exp_dir / 'plots').mkdir(exist_ok=True)
     
     # Save config
     with open(exp_dir / 'config.yaml', 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
+    
+    # Log storage location
+    if using_drive:
+        logger.info(f"Experiment folder created in Google Drive: {exp_dir}")
+    else:
+        logger.info(f"Experiment folder created locally: {exp_dir}")
     
     return exp_dir
 
@@ -655,9 +721,8 @@ def main():
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
     
-    # Create experiment folder
+    # Create experiment folder (handles Colab/local automatically)
     exp_dir = create_experiment_folder(config)
-    logger.info(f'Created experiment directory: {exp_dir}')
     
     # Set device
     if config['hardware']['use_cuda'] and torch.cuda.is_available():
@@ -665,6 +730,19 @@ def main():
     else:
         device = torch.device('cpu')
     logger.info(f'Using device: {device}')
+    
+    # If in Colab, check if using GPU
+    if is_colab():
+        if torch.cuda.is_available():
+            logger.info("GPU is available in Colab")
+            try:
+                import subprocess
+                gpu_info = subprocess.check_output(['nvidia-smi']).decode('utf-8')
+                logger.info("GPU Info:\n" + gpu_info)
+            except Exception as e:
+                logger.warning(f"Failed to get GPU info: {str(e)}")
+        else:
+            logger.warning("No GPU available in Colab. Training might be slow.")
     
     # Set paths
     data_dir = Path(config['dataset']['root_dir'])
