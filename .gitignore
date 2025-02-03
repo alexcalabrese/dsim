@@ -9,6 +9,7 @@ __pycache__/
 CREMA-D/
 evaluation/
 models/
+Faster R-CNN/
 
 # Distribution / packaging
 .Python

@@ -1,16 +1,17 @@
 # Training parameters
 training:
-  dataset_percentage: 0.5  # Percentage of dataset to use (10%)
+  dataset_percentage: 0.01  # Percentage of dataset to use
   batch_size: 32
-  epochs: 3
+  epochs: 10
   validation_split: 0.2
-  learning_rate: 0.01
+  learning_rate: 0.001
 
 # Model parameters
 model:
-  dropout_rate: 0.45
-  conv_filters: [32, 64, 128]
-  dense_units: [256, 128]
+  dropout_rate: 0.3
+  dense_layers: [512, 256, 128, 64]  # Units in each dense layer
+  l2_regularization: 0.0001
+  activation: 'relu'
 
 # Feature extraction parameters
 features:

@@ -17,12 +17,15 @@ logger = logging.getLogger(__name__)
 
 class EmotionDetectionModel:
     """
-    A class for emotion detection from audio features using a CNN architecture.
+    A class for emotion detection from audio features using a Multi-Layer Perceptron (MLP) architecture.
+    The model uses multiple dense layers with batch normalization and dropout for regularization.
+    Features are flattened and passed through a series of dense layers that progressively reduce
+    dimensionality while learning hierarchical representations of the input data.
     """
     
     def __init__(self, input_shape: Tuple[int, ...], num_classes: int = 6, config_path: str = "config.yaml"):
         """
-        Initialize the emotion detection model.
+        Initialize the MLP model for emotion detection.
         
         Parameters
         ----------
@@ -54,59 +57,57 @@ class EmotionDetectionModel:
         
     def _build_model(self) -> models.Model:
         """
-        Build and compile the CNN model for emotion detection, with adjustments to reduce overfitting.
+        Build and compile the MLP model for emotion detection.
+        The architecture consists of multiple dense layers with batch normalization
+        and dropout for regularization. The network progressively reduces dimensionality
+        through the dense layers while maintaining the ability to learn complex patterns.
         
         Returns
         -------
         models.Model
             Compiled Keras model
         """
-        l2_reg = tf.keras.regularizers.l2(1e-4)  # L2 regularization factor
+        # Get model configuration parameters
+        dense_layers = self.config['model']['dense_layers']
+        dropout_rate = self.config['model'].get('dropout_rate', 0.3)
+        l2_reg = tf.keras.regularizers.l2(self.config['model'].get('l2_regularization', 0.0001))
+        activation = self.config['model'].get('activation', 'relu')
         
-        model = models.Sequential([
-            # Input layer
-            layers.Input(shape=self.input_shape),
-            
-            # First Convolutional Block with L2 regularization and increased dropout
-            layers.Conv2D(self.config['model']['conv_filters'][0], (3, 3), 
-                          activation='relu', padding='same', kernel_regularizer=l2_reg),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(self.config['model'].get('dropout_rate', 0.3)),  # increased dropout
-            
-            # Second Convolutional Block with L2 regularization and increased dropout
-            layers.Conv2D(self.config['model']['conv_filters'][1], (3, 3), 
-                          activation='relu', padding='same', kernel_regularizer=l2_reg),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(self.config['model'].get('dropout_rate', 0.3)),
-            
-            # Third Convolutional Block with L2 regularization and increased dropout
-            layers.Conv2D(self.config['model']['conv_filters'][2], (3, 3), 
-                          activation='relu', padding='same', kernel_regularizer=l2_reg),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(self.config['model'].get('dropout_rate', 0.3)),
-            
-            # Global Average Pooling to reduce overfitting compared to Flattening
-            layers.GlobalAveragePooling2D(),
-            
-            # Dense Layers with additional regularization
-            layers.Dense(self.config['model']['dense_units'][0], activation='relu', kernel_regularizer=l2_reg),
-            layers.BatchNormalization(),
-            layers.Dropout(self.config['model'].get('dropout_rate', 0.3) ),
-            
-            # Output layer
-            layers.Dense(self.num_classes, activation='softmax')
-        ])
+        # Build the model
+        model = models.Sequential()
+        
+        # Input layer
+        model.add(layers.Input(shape=self.input_shape))
+        
+        # Flatten the input features
+        model.add(layers.Flatten())
+        
+        # Add dense layers with progressively decreasing units
+        for units in dense_layers:
+            model.add(layers.Dense(
+                units=units,
+                activation=activation,
+                kernel_regularizer=l2_reg
+            ))
+            model.add(layers.BatchNormalization())
+            model.add(layers.Dropout(dropout_rate))
+        
+        # Output layer with softmax activation for multi-class classification
+        model.add(layers.Dense(self.num_classes, activation='softmax'))
         
         # Compile model with learning rate from config
-        optimizer = tf.keras.optimizers.Adam(learning_rate=self.config['training']['learning_rate'])
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate=self.config['training'].get('learning_rate', 0.001)
+        )
+        
         model.compile(
             optimizer=optimizer,
             loss='categorical_crossentropy',
             metrics=['accuracy']
         )
+        
+        # Log model summary
+        model.summary(print_fn=logger.info)
         
         return model
     
@@ -207,8 +208,8 @@ class EmotionDetectionModel:
               y_train: np.ndarray,
               X_val: Optional[np.ndarray] = None,
               y_val: Optional[np.ndarray] = None,
-              epochs: int = 50,
-              batch_size: int = 32,
+              epochs: Optional[int] = None,
+              batch_size: Optional[int] = None,
               save_plots: bool = True,
               eval_dir: Optional[Path] = None) -> Dict:
         """
@@ -224,20 +225,27 @@ class EmotionDetectionModel:
             Validation features, by default None
         y_val : Optional[np.ndarray], optional
             Validation labels, by default None
-        epochs : int, optional
-            Number of training epochs, by default 50
-        batch_size : int, optional
-            Batch size for training, by default 32
+        epochs : Optional[int], optional
+            Number of training epochs, uses config value if None
+        batch_size : Optional[int], optional
+            Batch size for training, uses config value if None
         save_plots : bool, optional
             Whether to save evaluation plots, by default True
+        eval_dir : Optional[Path], optional
+            Directory to save evaluation plots
             
         Returns
         -------
         Dict
             Training metrics and history
         """
+        # Use config values if not provided
+        epochs = epochs or self.config['training']['epochs']
+        batch_size = batch_size or self.config['training']['batch_size']
+        
         validation_data = (X_val, y_val) if X_val is not None and y_val is not None else None
         
+        logger.info(f"Starting model training for {epochs} epochs with batch size {batch_size}")
         history = self.model.fit(
             X_train, y_train,
             epochs=epochs,
@@ -246,7 +254,7 @@ class EmotionDetectionModel:
             verbose=1
         )
         
-        # Ensure that the history is correctly captured
+        # Calculate metrics
         metrics = {
             'train_accuracy': float(history.history['accuracy'][-1]),
             'accuracy_history': history.history['accuracy'],
@@ -254,51 +262,44 @@ class EmotionDetectionModel:
         }
         
         if validation_data:
-            val_pred = self.model.predict(X_val)
             metrics.update({
                 'val_accuracy': float(history.history['val_accuracy'][-1]),
                 'val_accuracy_history': history.history['val_accuracy'],
                 'val_loss_history': history.history['val_loss']
             })
             
+            # Get validation predictions
+            val_pred = self.model.predict(X_val)
+            
             # Calculate per-class metrics
-            if y_val is not None:  # Type guard for mypy
-                y_val_true = np.argmax(y_val, axis=1)
-                y_val_pred = np.argmax(val_pred, axis=1)
-                
-                # Get confusion matrix
-                cm = confusion_matrix(y_val_true, y_val_pred)
-                # Store confusion matrix values
-                for i in range(len(self.emotion_mapping)):
-                    for j in range(len(self.emotion_mapping)):
-                        metrics[f'confusion_matrix_{i}_{j}'] = int(cm[i, j])
-                
-                # Get classification report for detailed metrics
-                report = classification_report(
-                    y_val_true,
-                    y_val_pred,
-                    target_names=list(self.emotion_mapping.values()),
-                    output_dict=True,
-                    zero_division=0
-                )
-                
-                # Add overall metrics
-                metrics.update({
-                    'precision': report['weighted avg']['precision'],
-                    'recall': report['weighted avg']['recall'],
-                    'f1': report['weighted avg']['f1-score']
-                })
-                
-                # Add per-class metrics
-                for emotion in self.emotion_mapping.values():
-                    metrics[f'{emotion}_precision'] = report[emotion]['precision']
-                    metrics[f'{emotion}_recall'] = report[emotion]['recall']
-                    metrics[f'{emotion}_f1'] = report[emotion]['f1-score']
+            y_val_true = np.argmax(y_val, axis=1)
+            y_val_pred = np.argmax(val_pred, axis=1)
+            
+            report = classification_report(
+                y_val_true,
+                y_val_pred,
+                target_names=list(self.emotion_mapping.values()),
+                output_dict=True,
+                zero_division=0
+            )
+            
+            # Add overall metrics
+            metrics.update({
+                'precision': report['weighted avg']['precision'],
+                'recall': report['weighted avg']['recall'],
+                'f1': report['weighted avg']['f1-score']
+            })
+            
+            # Add per-class metrics
+            for emotion in self.emotion_mapping.values():
+                metrics[f'{emotion}_precision'] = report[emotion]['precision']
+                metrics[f'{emotion}_recall'] = report[emotion]['recall']
+                metrics[f'{emotion}_f1'] = report[emotion]['f1-score']
         
         # Save evaluation plots if required
-        if save_plots and eval_dir:
+        if save_plots:
             self.save_evaluation_plots(
-                history.history,
+                history=history.history,
                 y_true=y_val,
                 y_pred=val_pred if validation_data else None,
                 eval_dir=eval_dir

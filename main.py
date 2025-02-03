@@ -3,18 +3,30 @@ import logging
 import numpy as np
 from pathlib import Path
 import yaml
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
 from numpy.typing import NDArray
 import json
 from datetime import datetime
+import os
 
 from data_processor import DataProcessor
 from model import EmotionDetectionModel, prepare_features_for_model
 from utils import load_audio, extract_features, normalize_features
-from model_comparison import BaselineModel, compare_models
+from model_comparison import (
+    LogisticRegressionModel,
+    DecisionTreeModel,
+    RandomForestModel,
+    SVMModel,
+    NaiveBayesModel,
+    GradientBoostingModel,
+    XGBoostModel,
+    compare_models,
+    is_running_in_colab,
+    setup_drive_directory
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -45,7 +57,7 @@ def load_config(config_path: str) -> Dict:
 
 def train_model(data_dir: str, model_save_path: Optional[str] = None, config_path: str = "config.yaml"):
     """
-    Train both CNN and baseline models on the CREMA-D dataset.
+    Train MLP and traditional ML models on the CREMA-D dataset.
     
     Parameters
     ----------
@@ -67,8 +79,10 @@ def train_model(data_dir: str, model_save_path: Optional[str] = None, config_pat
         
         # Create evaluation directory with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        eval_dir = Path(config['paths']['evaluation_dir']) / f"evaluation_{timestamp}"
-        eval_dir.mkdir(parents=True, exist_ok=True)
+        base_eval_dir = config['paths']['evaluation_dir']
+        
+        # Set up evaluation directory (local or Google Drive)
+        eval_dir = setup_drive_directory(f"{base_eval_dir}/evaluation_{timestamp}")
         logger.info(f"Created evaluation directory: {eval_dir}")
         
         logger.info("Initializing data processor...")
@@ -82,9 +96,9 @@ def train_model(data_dir: str, model_save_path: Optional[str] = None, config_pat
         # Get emotion mapping
         emotion_mapping = processor.emotion_mapping
         
-        # Train CNN model
-        logger.info("Training CNN model...")
-        cnn_metrics = train_cnn_model(
+        # Train MLP model
+        logger.info("Training MLP model...")
+        mlp_metrics = train_mlp_model(
             dataset=dataset,
             model_save_path=model_save_path,
             config=config,
@@ -93,28 +107,43 @@ def train_model(data_dir: str, model_save_path: Optional[str] = None, config_pat
             timestamp=timestamp
         )
         
-        # Train baseline model
-        logger.info("Training baseline model...")
-        baseline_metrics = train_baseline_model(
-            dataset=dataset,
-            config=config,
-            emotion_mapping=emotion_mapping,
-            eval_dir=eval_dir
-        )
+        # Initialize and train traditional ML models
+        traditional_models = {
+            'LogisticRegression': LogisticRegressionModel(),
+            'DecisionTree': DecisionTreeModel(),
+            'RandomForest': RandomForestModel(),
+            'SVM': SVMModel(),
+            'NaiveBayes': NaiveBayesModel(),
+            'GradientBoosting': GradientBoostingModel(),
+            'XGBoost': XGBoostModel()
+        }
         
-        # Compare models
+        traditional_models_metrics = {}
+        for model_name, model in traditional_models.items():
+            logger.info(f"Training {model_name} model...")
+            metrics = train_traditional_model(
+                model=model,
+                dataset=dataset,
+                config=config,
+                emotion_mapping=emotion_mapping,
+                eval_dir=eval_dir,
+                model_name=model_name
+            )
+            traditional_models_metrics[model_name] = metrics
+        
+        # Compare all models
         logger.info("Comparing models...")
         compare_models(
-            cnn_metrics,
-            baseline_metrics,
+            mlp_metrics,
+            traditional_models_metrics,
             save_dir=eval_dir
         )
         
         # Save final metrics
         metrics = {
             'timestamp': timestamp,
-            'cnn': cnn_metrics,
-            'baseline': baseline_metrics,
+            'mlp': mlp_metrics,
+            'traditional_models': traditional_models_metrics,
             'config': config
         }
         metrics_file = eval_dir / 'metrics.json'
@@ -126,14 +155,14 @@ def train_model(data_dir: str, model_save_path: Optional[str] = None, config_pat
         logger.error(f"Error in training pipeline: {str(e)}")
         raise
 
-def train_cnn_model(dataset: Dict[str, Union[NDArray, Any]], 
+def train_mlp_model(dataset: Dict[str, Union[NDArray, Any]], 
                    model_save_path: Optional[str], 
                    config: Dict[str, Any],
                    config_path: str,
                    eval_dir: Path,
                    timestamp: str) -> Dict[str, float]:
     """
-    Train the CNN model.
+    Train the MLP model.
     
     Parameters
     ----------
@@ -159,7 +188,7 @@ def train_cnn_model(dataset: Dict[str, Union[NDArray, Any]],
     sample_features = prepare_features_for_model(dataset['train_features'][0])
     input_shape = sample_features.shape[1:]
     
-    logger.info("Initializing CNN model...")
+    logger.info("Initializing MLP model...")
     model = EmotionDetectionModel(
         input_shape=input_shape,
         num_classes=6,  # Number of emotions
@@ -170,7 +199,7 @@ def train_cnn_model(dataset: Dict[str, Union[NDArray, Any]],
     X_train = np.vstack([prepare_features_for_model(f) for f in dataset['train_features']])
     X_val = np.vstack([prepare_features_for_model(f) for f in dataset['val_features']])
     
-    logger.info("Starting CNN model training...")
+    logger.info("Starting MLP model training...")
     metrics = model.train(
         X_train=X_train,
         y_train=dataset['train_labels'],
@@ -181,21 +210,54 @@ def train_cnn_model(dataset: Dict[str, Union[NDArray, Any]],
         eval_dir=eval_dir
     )
     
+    # Save model if path provided
     if model_save_path:
-        logger.info(f"Saving CNN model to {model_save_path}")
-        model.save_model(model_save_path)
+        if is_running_in_colab():
+            # Set up models directory in Drive
+            drive_models_dir = setup_drive_directory('models')
+            
+            # Save model architecture and weights
+            model_name = f"mlp_model_{timestamp}"
+            model_dir = drive_models_dir / model_name
+            model_dir.mkdir(exist_ok=True)
+            
+            # Save model files
+            model_path = model_dir / f"{model_name}.keras"
+            logger.info(f"Saving MLP model to Google Drive: {model_path}")
+            model.save_model(str(model_path))
+            
+            # Save model metadata
+            metadata = {
+                'timestamp': timestamp,
+                'architecture': 'MLP',
+                'input_shape': input_shape,
+                'metrics': metrics,
+                'config': config
+            }
+            with open(model_dir / 'model_metadata.json', 'w') as f:
+                json.dump(metadata, f, indent=4)
+        else:
+            # Save locally
+            logger.info(f"Saving MLP model locally to {model_save_path}")
+            model.save_model(model_save_path)
     
     return metrics
 
-def train_baseline_model(dataset: Dict[str, Union[NDArray, Any]], 
-                        config: Dict[str, Any],
-                        emotion_mapping: Dict[str, str],
-                        eval_dir: Path) -> Dict[str, float]:
+def train_traditional_model(
+    model: Any,
+    dataset: Dict[str, Union[NDArray, Any]], 
+    config: Dict[str, Any],
+    emotion_mapping: Dict[str, str],
+    eval_dir: Path,
+    model_name: str
+) -> Dict[str, float]:
     """
-    Train the baseline logistic regression model.
+    Train a traditional ML model.
     
     Parameters
     ----------
+    model : Any
+        The model instance to train
     dataset : Dict[str, Union[NDArray, Any]]
         Dataset dictionary containing features and labels
     config : Dict[str, Any]
@@ -204,17 +266,16 @@ def train_baseline_model(dataset: Dict[str, Union[NDArray, Any]],
         Mapping of emotion codes to emotion names
     eval_dir : Path
         Evaluation directory
+    model_name : str
+        Name of the model being trained
         
     Returns
     -------
     Dict[str, float]
         Training metrics
     """
-    logger.info("Initializing baseline model...")
-    baseline = BaselineModel()
-    
-    logger.info("Training baseline model...")
-    metrics = baseline.train(
+    logger.info(f"Training {model_name}...")
+    metrics = model.train(
         X_train=dataset['train_features'],
         y_train=dataset['train_labels'],
         X_val=dataset['val_features'],
@@ -344,10 +405,10 @@ def main():
     
     # Train command
     train_parser = subparsers.add_parser('train', help='Train the models')
-    train_parser.add_argument('--data_dir', type=str, required=True,
+    train_parser.add_argument('--data_dir', type=str, default='./CREMA-D',
                              help='Path to the data directory')
     train_parser.add_argument('--model_save_path', type=str,
-                             help='Path to save the trained CNN model')
+                             help='Path to save the trained MLP model')
     train_parser.add_argument('--config', type=str, default='config.yaml',
                              help='Path to the configuration file')
     

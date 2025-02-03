@@ -1,3 +1,4 @@
+from tqdm import tqdm  # Import tqdm for progress bar
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -154,7 +155,7 @@ class DataProcessor:
             # Process audio files and extract features
             features_list = []
             logger.info("Processing audio files to extract features.")
-            for file_name in metadata_df['fileName']:
+            for file_name in tqdm(metadata_df['fileName'], desc="Processing files", unit="file"):
                 file_path = str(self.data_dir / 'AudioWAV' / f"{file_name}.wav")
                 features = self.process_audio_file(file_path)
                 features_list.append(features)
