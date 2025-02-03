@@ -11,8 +11,8 @@ model:
 
 # Training parameters
 training:
-  num_epochs: 2
-  batch_size: 2
+  num_epochs: 10
+  batch_size: 6
   num_workers: 0  # Set to higher number if more CPU cores available
   learning_rate: 0.005
   momentum: 0.9
