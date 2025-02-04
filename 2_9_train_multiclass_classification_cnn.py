@@ -248,36 +248,45 @@ def build_model(input_shape: Tuple[int, int, int], num_classes: int) -> tf.keras
     tf.keras.Model
         Compiled model
     """
-    # Base model
-    base_model = tf.keras.applications.EfficientNetV2M(
-        include_top=False,
-        weights='imagenet',
-        input_shape=input_shape,
-        pooling='max'
-    )
-    
-    # Unfreeze the base model for fine-tuning
-    base_model.trainable = True
-    
-    # Build the model
     model = models.Sequential([
-        base_model,
-        layers.BatchNormalization(axis=-1, momentum=0.99, epsilon=0.001),
-        layers.Dense(512, kernel_regularizer=regularizers.l2(0.016),
-                    activity_regularizer=regularizers.l1(0.006),
-                    bias_regularizer=regularizers.l1(0.006),
-                    activation='relu'),
-        layers.Dropout(0.45),
+        # First Convolutional Block
+        layers.Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.2),
+        
+        # Second Convolutional Block
+        layers.Conv2D(64, (3, 3), activation='relu'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.2),
+        
+        # Third Convolutional Block
+        layers.Conv2D(128, (3, 3), activation='relu'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.2),
+        
+        # Fourth Convolutional Block
+        layers.Conv2D(256, (3, 3), activation='relu'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.2),
+        
+        # Dense Layers
+        layers.Flatten(),
+        layers.Dense(512, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(0.5),
         layers.Dense(256, activation='relu'),
         layers.BatchNormalization(),
-        layers.Dropout(0.35),
-        layers.Dense(num_classes, activation='sigmoid')  # Sigmoid for multilabel
+        layers.Dropout(0.5),
+        layers.Dense(num_classes, activation='sigmoid')  
     ])
     
-    # Compile model
     model.compile(
         optimizer=optimizers.Adam(learning_rate=LEARNING_RATE),
-        loss='binary_crossentropy',
+        loss='binary_crossentropy',  
         metrics=[
             'accuracy',
             tf.keras.metrics.AUC(multi_label=True, name='auc'),
