@@ -40,6 +40,7 @@ if not GEMINI_API_KEY:
     
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash-thinking-exp')
+# model = genai.GenerativeModel('gemini-exp-1206')
 
 def load_class_names(dataset_yaml: str = "Data/3_WebUI_7k/yolo_dataset/dataset.yaml") -> Dict[int, str]:
     """Load class names from dataset yaml file."""
@@ -138,10 +139,13 @@ def visualize_predictions(
     selected_box: Optional[int] = None,
     box_opacity: float = 0.3,
     label_opacity: float = 0.8
-) -> Tuple[plt.Figure, List[Dict]]:
+) -> Tuple[plt.Figure, List[Dict], np.ndarray]:
     """Visualize model predictions on the image."""
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
+    
+    # Create a copy of the image for drawing boxes
+    image_with_boxes = image.copy()
     
     # Display image
     ax.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
@@ -170,14 +174,19 @@ def visualize_predictions(
         
         # Determine box color (green if selected, red otherwise)
         box_color = 'green' if idx == selected_box else 'red'
+        box_color_bgr = (0, 255, 0) if idx == selected_box else (0, 0, 255)
         
-        # Draw filled rectangle with opacity
+        # Draw on matplotlib figure
         rect_fill = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=True, 
                                 color=box_color, alpha=box_opacity)
         rect_border = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, 
                                   color=box_color, linewidth=2)
         ax.add_patch(rect_fill)
         ax.add_patch(rect_border)
+        
+        # Draw on image copy
+        cv2.rectangle(image_with_boxes, (int(x1), int(y1)), (int(x2), int(y2)), 
+                     box_color_bgr, 2)
         
         # Add label with confidence if enabled
         if show_labels:
@@ -189,14 +198,19 @@ def visualize_predictions(
             if show_conf:
                 label_text += f" {conf:.2f}"
             
+            # Add label to matplotlib figure    
             ax.text(x1, y1-5, label_text, color=box_color, fontsize=font_size, 
                     bbox=dict(facecolor='white', alpha=label_opacity, edgecolor=box_color, pad=2))
+            
+            # Add label to image copy
+            cv2.putText(image_with_boxes, label_text, (int(x1), int(y1)-5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color_bgr, 2)
     
     # Remove axes
     ax.axis('off')
     plt.tight_layout()
     
-    return fig, boxes_info
+    return fig, boxes_info, image_with_boxes
 
 def main():
     st.set_page_config(
@@ -302,7 +316,7 @@ def main():
             
             # Analyze with Gemini
             with st.spinner("Analyzing task with Gemini..."):
-                fig, boxes_info = visualize_predictions(
+                fig, boxes_info , image_with_boxes= visualize_predictions(
                     image,
                     results,
                     st.session_state.class_names,
@@ -313,19 +327,9 @@ def main():
                     font_size=font_size
                 )
                 
-                # Convert the matplotlib figure (fig) to a numpy image for Gemini analysis
-                fig.canvas.draw()  # Render the figure to update its canvas
-                width, height = fig.canvas.get_width_height()  # Get current figure dimensions
-                # Extract the RGB buffer from the canvas and convert it to a numpy array
-                fig_image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8').reshape(height, width, 3)
-                # Convert from RGB to BGR format as expected by analyze_task_with_gemini
-                fig_image = cv2.cvtColor(fig_image, cv2.COLOR_RGB2BGR)
-                # Replace fig with the converted numpy image
-                fig = fig_image
-                
                 selected_box, explanation = analyze_task_with_gemini(
                     image, 
-                    fig,
+                    image_with_boxes,
                     boxes_info, 
                     task,
                     previous_context
@@ -339,7 +343,7 @@ def main():
             # Display predictions
             with col2:
                 st.subheader("Model Predictions")
-                fig, _ = visualize_predictions(
+                fig, _ ,_= visualize_predictions(
                     image,
                     results,
                     st.session_state.class_names,
