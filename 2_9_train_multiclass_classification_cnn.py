@@ -166,7 +166,22 @@ def create_data_generators(
         logger.info(f"Training samples: {len(train_df)}")
         logger.info(f"Validation samples: {len(val_df)}")
         logger.info(f"Testing samples: {len(test_df)}")
-    
+
+    # Balance the training set by upsampling based on a primary class extracted from parsed_annotations
+    train_df = train_df.copy()
+    train_df['primary_class'] = train_df['parsed_annotations'].apply(lambda anns: anns[0].get('class') if (len(anns) > 0 and 'class' in anns[0]) else None)
+    class_counts = train_df['primary_class'].value_counts()
+    max_count = class_counts.max()
+    balanced_dfs = []
+    for cls, count in class_counts.items():
+        cls_df = train_df[train_df['primary_class'] == cls]
+        if count < max_count:
+            cls_df = cls_df.sample(n=max_count, replace=True, random_state=42)
+            logger.info(f"Balanced {cls} class: {count} -> {max_count}")
+        balanced_dfs.append(cls_df)
+    train_df = pd.concat(balanced_dfs).sample(frac=1, random_state=42).reset_index(drop=True)
+    train_df = train_df.drop(columns=['primary_class'])
+
     # Extract all unique classes
     all_classes = set()
     for df in [train_df, val_df, test_df]:
@@ -448,6 +463,8 @@ def evaluate_model(
 
 def main():
     parser = argparse.ArgumentParser(description='Train multilabel CNN classification model')
+    parser.add_argument('--merge-p99-p100', dest='merge_p99_p100', action='store_true', help="Merge classes 'p99' and 'p100' into a single class 'p99_p100'")
+    parser.set_defaults(merge_p99_p100=True)
     parser.add_argument('--data-path', type=str, 
                        default="/teamspace/studios/this_studio/dsim/Data/2_CADICA/cadica_frame_analysis.csv",
                        help='Path to frame analysis CSV')
@@ -469,6 +486,16 @@ def main():
     # Load and prepare data
     logger.info("Loading and preparing data...")
     df = load_and_filter_data(Path(args.data_path))
+    
+    # If merge_p99_p100 flag is set, merge classes 'p99' and 'p100' into 'p99_p100'
+    if args.merge_p99_p100:
+        logger.info("Merging classes p99 and p100 into 'p99_p100'")
+        def merge_classes(anns: list) -> list:
+            for ann in anns:
+                if 'class' in ann and ann['class'] in ['p99', 'p100']:
+                    ann['class'] = 'p99_p100'
+            return anns
+        df['parsed_annotations'] = df['parsed_annotations'].apply(merge_classes)
     
     # Split into train, validation, and test
     train_val_df, test_df = create_patient_wise_split(df, test_size=0.2)
