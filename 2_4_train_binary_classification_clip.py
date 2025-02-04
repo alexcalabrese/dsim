@@ -87,6 +87,22 @@ def create_data_loaders(
         logger.info(f"Training samples: {len(train_df)}")
         logger.info(f"Testing samples: {len(test_df)}")
     
+    # Balance training set by oversampling minority class
+    train_df = train_df.copy()
+    lesion_df = train_df[train_df['is_lesion'] == True]
+    no_lesion_df = train_df[train_df['is_lesion'] == False]
+    
+    if len(lesion_df) > len(no_lesion_df):
+        no_lesion_df = no_lesion_df.sample(n=len(lesion_df), replace=True, random_state=42)
+        train_df = pd.concat([lesion_df, no_lesion_df])
+    else:
+        lesion_df = lesion_df.sample(n=len(no_lesion_df), replace=True, random_state=42)
+        train_df = pd.concat([no_lesion_df, lesion_df])
+    
+    logger.info(f"Balanced training set size: {len(train_df)}")
+    logger.info(f"Lesion samples: {len(train_df[train_df['is_lesion'] == True])}")
+    logger.info(f"Non-lesion samples: {len(train_df[train_df['is_lesion'] == False])}")
+    
     # Modified transform for grayscale images
     transform = transforms.Compose([
         transforms.ToPILImage(),
