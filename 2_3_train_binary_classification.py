@@ -2,6 +2,7 @@
 Train binary classification model for lesion detection using EfficientNetV2.
 """
 
+from datetime import datetime
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -100,6 +101,9 @@ def create_data_generators(
     logger.info(f"Original class distribution - No Lesion: {n_no_lesion}, Lesion: {n_lesion}")
     logger.info(f"Balanced class distribution - No Lesion: {len(train_df_balanced[train_df_balanced['is_lesion'] == 'no_lesion'])}, "
                 f"Lesion: {len(train_df_balanced[train_df_balanced['is_lesion'] == 'lesion'])}")
+    
+    # pixel value before rescale
+    logger.info(f"Pixel value before rescale 1./255 : {train_df_balanced['frame_path'].iloc[0]}")
     
     datagen = ImageDataGenerator(
         rescale=1./255,
@@ -306,12 +310,17 @@ def main():
     
     # Evaluate model
     logger.info("Evaluating model...")
-    evaluate_model(model, test_gen, output_path)
-    
-    model_name = "lesion_detection_efficientnetv2m_subsample_10p_10epochs_weighted.h5"
+    try:
+        evaluate_model(model, test_gen, output_path)
+    except Exception as e:
+        logger.error(f"Error evaluating model: {str(e)}")
+        
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_name = f"lesion_detection_efficientnetv2m_subsample_100p_epochs_{args.epochs}p_weighted_{timestamp}.h5"
     # Save model
     model.save(output_path / model_name)
-    logger.info(f"Model saved to {output_path / 'lesion_detection_model.h5'}")
+    logger.info(f"Model saved to {output_path / model_name}")
+    print(f"Model total params: {model.count_params()}")
 
 if __name__ == "__main__":
     main()

@@ -437,13 +437,16 @@ def main():
     
     # Evaluate best model
     logger.info("\nEvaluating best model...")
-    evaluate_model(best_model, test_generator, output_path)
+    try:
+        evaluate_model(best_model, test_generator, output_path)
+    except Exception as e:
+        logger.error(f"Error evaluating model: {str(e)}")
     
     model_name = f"model_batch_size_{best_batch_size}_subsample_{args.subsample}.h5"
     # Save best model
     best_model.save(output_path / model_name)
     logger.info(f"Best model saved to {output_path / model_name}")
-
+    print(f"Model total params: {best_model.count_params()}")
 if __name__ == "__main__":
     main()
 

@@ -2,6 +2,7 @@
 Train binary classification model for lesion detection using CLIP Vision model.
 """
 
+from datetime import datetime
 import torch
 import numpy as np
 import pandas as pd
@@ -426,8 +427,17 @@ def main():
     
     # Evaluate model
     logger.info("Evaluating model...")
-    evaluate_model(model, test_loader, device, output_path)
-
+    try:
+        evaluate_model(model, test_loader, device, output_path)
+    except Exception as e:
+        logger.error(f"Error evaluating model: {str(e)}")
+    
+    # Save model
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_name = f"lesion_detection_clip_subsample_100p_epochs_{args.epochs}p_{timestamp}.h5"
+    model.save(output_path / model_name)
+    logger.info(f"Model saved to {output_path / model_name}")
+    print(f"Model total params: {model.count_params()}")
 if __name__ == "__main__":
     main()
 
