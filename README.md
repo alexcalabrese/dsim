@@ -5,7 +5,7 @@ This project implements an audio-based emotion detection system using deep learn
 ## Features
 
 - Audio feature extraction using librosa
-- CNN-based deep learning model for emotion classification
+- MLP-based deep learning model for emotion classification
 - Support for both training and inference
 - Comprehensive evaluation metrics and visualizations
 - Easy-to-use command-line interface
@@ -70,16 +70,6 @@ To predict emotion from an audio file:
 python main.py predict --model_path /path/to/model --audio_file /path/to/audio
 ```
 
-## Model Architecture
-
-The emotion detection model uses a CNN architecture with the following key features:
-
-- Multiple convolutional layers with batch normalization
-- Dropout for regularization
-- Dense layers for final classification
-- Categorical cross-entropy loss function
-- Adam optimizer
-
 ## Feature Extraction
 
 The system extracts the following audio features:
@@ -106,12 +96,7 @@ The system generates the following evaluation metrics:
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
 ## Acknowledgments
 
 - CREMA-D dataset creators and contributors
 - librosa library for audio processing
-- TensorFlow team for the deep learning framework 
