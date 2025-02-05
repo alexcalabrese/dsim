@@ -316,7 +316,8 @@ def run_inference(
 
 if __name__ == "__main__":
     run_inference(
-        model_path="runs/detect/train/weights/best.onnx",
+        # model_path="runs/detect/train/weights/best.onnx",
+        model_path="/teamspace/studios/this_studio/dsim/best.pt",
         num_samples=5,
         conf_threshold=0.25
     ) 
